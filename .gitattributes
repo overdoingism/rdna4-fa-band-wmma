@@ -1,0 +1,4 @@
+# raw test-backend-ops logs are kept byte-for-byte as captured on Windows (CRLF, ANSI colours)
+bench/results/*.log -text
+*.patch -text
+*.ps1 text eol=crlf
