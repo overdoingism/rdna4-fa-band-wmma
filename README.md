@@ -35,7 +35,7 @@ Prefill is unchanged: `n_q > 8` does not take the new path, and the numbers are 
 ### Real server, Windows
 
 **Setup:**
-- Hardware and software: R9700, Windows 11, ROCm 10.0.
+- Hardware and software: R9700, Windows 10, ROCm 10.0.
 - Base: rdna-boosts r11 rebased onto b11040.
 - Model: Qwen3.8-27B Q5_K_M, q8_0 K/V, MTP n-max 2, `-c 262144`.
 - Workload: one long local agent conversation (commentary + translation task), 93,225 prompt tokens.

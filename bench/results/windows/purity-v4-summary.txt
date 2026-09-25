@@ -1,4 +1,4 @@
-Greedy-purity check on Windows 11, ROCm 10.0, R9700 (gfx1201), rdna-boosts r11 (rebased onto b11040) + patch v4.
+Greedy-purity check on Windows 10, ROCm 10.0, R9700 (gfx1201), rdna-boosts r11 (rebased onto b11040) + patch v4.
 scripts/purity-check.ps1 (older revision, band value fixed at 2), -NPredict 512 -Control.
 Model Qwen3.8-27B Q5_K_M, q8_0 K/V, --spec-type draft-mtp --spec-draft-n-max 2, prompt 18,759 tokens.
 The raw JSON responses are not published because they echo the prompt.
