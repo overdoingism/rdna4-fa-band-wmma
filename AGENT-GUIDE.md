@@ -203,10 +203,6 @@ GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 1310
 - `-ctk/-ctv q8_0` is required; `draft-mtp` is what the patch speeds up; size `-c` to your VRAM.
 - `--parallel 1` is required: the patch only engages for a single sequence, and several slots without a unified KV
   cache split attention into several sequences.
-- **Qwen3.8 是推理（thinking）模型。** 如果前端收到的回覆是空的，通常是 token 全被思考過程用掉了：回應內容在 `reasoning_content`，而 `max_tokens` 已經耗盡。
-  - 解法：調高 `max_tokens`，或啟動時加 `--reasoning off` 關閉思考。這個設定和本 patch 無關，依你的用途決定。
-  Qwen3.8 is a reasoning model. Empty replies usually mean the thinking consumed `max_tokens` (the text is in
-  `reasoning_content`). Raise `max_tokens` or start the server with `--reasoning off`; this is unrelated to the patch.
 - 啟動後，OpenAI 相容 API 在 `http://127.0.0.1:8080/v1`，可以接任何前端使用。
   An OpenAI-compatible API is then served at `http://127.0.0.1:8080/v1`.
 
@@ -239,7 +235,6 @@ GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 1310
 | configure 或編譯找不到 HIP 裝置函式庫／`hipconfig` 路徑錯誤 | 在 configure 前補設：`$env:HIP_PLATFORM="amd"`、`$env:ROCM_PATH=$ROCM`、`$env:HIP_PATH=$ROCM`、`$env:LLVM_PATH="$ROCM\lib\llvm"`、`$env:HIP_DEVICE_LIB_PATH="$ROCM\lib\llvm\amdgcn\bitcode"`（先確認該目錄存在） |
 | `rocm-sdk test` 報 `WinError 2`（`hipconfig`） | `rocm-sdk path --bin` 沒在 `PATH` 裡，照 §2 的順序先設 `PATH` 再測 |
 | 腳本報 `#Requires -Version 7.0` | 用 `pwsh` 而不是 `powershell` 執行 |
-| 前端回覆為空 | 見 §5 的 Qwen 推理模型說明（`max_tokens` / `--reasoning off`） |
 | 啟動時找不到 `amdhip64*.dll` | 把 `rocm-sdk path --bin` 加進 `PATH` |
 | `no ROCm devices` | 更新驅動；Linux 確認使用者在 `render`、`video` 群組 |
 | 顯存不足 OOM | 降低 `-c`，或改用較小的量化 |
