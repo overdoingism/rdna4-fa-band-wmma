@@ -1,0 +1,22 @@
+Greedy-purity check on Windows 11, ROCm 10.0, R9700 (gfx1201), rdna-boosts r11 (rebased onto b11040) + patch v4.
+scripts/purity-check.ps1 (older revision, band value fixed at 2), -NPredict 512 -Control.
+Model Qwen3.8-27B Q5_K_M, q8_0 K/V, --spec-type draft-mtp --spec-draft-n-max 2, prompt 18,759 tokens.
+The raw JSON responses are not published because they echo the prompt.
+
+run            gen t/s   ms/step   drafts accepted/generated
+band2-mtp        29.48     56.64   206/609
+band2-plain      24.89     40.10   -
+stock-mtp        42.49     58.39   306/409
+stock-plain      25.61     38.97   -
+
+band2: draft-mtp vs plain decode  -> PASS (512 generated tokens identical)
+stock: draft-mtp vs plain decode  -> PASS (512 generated tokens identical)
+band2-plain vs stock-plain        -> first difference at generated token 65 (different kernel,
+                                     expected; purity is a per-build invariant)
+
+Draft acceptance differs between band2 and stock because the generated text differs from token 65 on:
+stock goes on to recite the source text almost verbatim, which the drafter predicts easily.
+Per verify step the patched build is faster (56.64 vs 58.39 ms/step at this shallow depth).
+
+For comparison, patch v2 (contiguous stream-k split) failed the same check: first mismatch at
+generated token 186 = KV position 18,944 = 74 x 256, i.e. exactly where the 256-padded KV length grew.

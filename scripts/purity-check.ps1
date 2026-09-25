@@ -10,9 +10,9 @@
   response and compares the generated token ids.
 
   Runs (each on a fresh server process):
-    D-on  / MTP-on    GGML_HIP_FA_BAND_WMMA=2, --spec-type draft-mtp
-    D-on  / MTP-off   GGML_HIP_FA_BAND_WMMA=2, no speculative decoding
-  With -Control the same pair is also run with the variable unset (stock rdna-boosts path),
+    band-mtp    GGML_HIP_FA_BAND_WMMA=<Band> (and _SPLIT=<Split> if given), --spec-type draft-mtp
+    band-plain  same variables, no speculative decoding
+  With -Control the same pair is also run with both variables unset (stock rdna-boosts path),
   which checks the harness itself: that pair is expected to match on a stock build.
 
   The prompt can be as long as the context allows; a long prompt (e.g. 50K+ tokens) exercises
@@ -33,6 +33,10 @@ param(
     [int]    $LoadTimeoutSec = 900,
     [string] $OutDir     = ".\purity-out",
     [switch] $Control,
+    # GGML_HIP_FA_BAND_WMMA value for the patched runs (2 or 4; 4 is the recommended setting).
+    [string] $Band       = "4",
+    # Optional GGML_HIP_FA_BAND_WMMA_SPLIT override (empty = the patch's default, one block per CU).
+    [string] $Split      = "",
     # Server arguments shared by every run (model, host, port and ctx-size are added separately).
     [string[]] $BaseArgs = @(
         "--parallel", "1", "--n-gpu-layers", "999", "--split-mode", "layer",
@@ -52,11 +56,14 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $prompt = Get-Content -Raw -Encoding UTF8 -Path $PromptFile
 $base   = "http://127.0.0.1:$Port"
 
-function Invoke-Run([string] $name, [string] $bandWmma, [bool] $mtp) {
-    Write-Host "=== $name (GGML_HIP_FA_BAND_WMMA=$(if ($bandWmma) { $bandWmma } else { '<unset>' }), MTP=$mtp)"
+function Invoke-Run([string] $name, [string] $bandWmma, [string] $split, [bool] $mtp) {
+    Write-Host "=== $name (GGML_HIP_FA_BAND_WMMA=$(if ($bandWmma) { $bandWmma } else { '<unset>' }), SPLIT=$(if ($split) { $split } else { '<unset>' }), MTP=$mtp)"
 
+    # Both variables are set or cleared explicitly so nothing leaks in from the calling shell.
     if ($bandWmma) { $env:GGML_HIP_FA_BAND_WMMA = $bandWmma }
     else { Remove-Item Env:GGML_HIP_FA_BAND_WMMA -ErrorAction SilentlyContinue }
+    if ($split) { $env:GGML_HIP_FA_BAND_WMMA_SPLIT = $split }
+    else { Remove-Item Env:GGML_HIP_FA_BAND_WMMA_SPLIT -ErrorAction SilentlyContinue }
 
     $srvArgs = @("--model", $Model, "--host", "127.0.0.1", "--port", "$Port", "--ctx-size", "$CtxSize") + $BaseArgs
     if ($mtp) { $srvArgs += $MtpArgs }
@@ -127,17 +134,18 @@ function Compare-Runs([string] $label, $a, $b) {
 
 $results = @()
 
-$dMtp   = Invoke-Run "D2-mtp"   "2" $true
-$dPlain = Invoke-Run "D2-plain" "2" $false
-$results += Compare-Runs "D2: draft-mtp vs plain decode" $dMtp $dPlain
+$dMtp   = Invoke-Run "band$Band-mtp"   $Band $Split $true
+$dPlain = Invoke-Run "band$Band-plain" $Band $Split $false
+$results += Compare-Runs "band=$($Band): draft-mtp vs plain decode" $dMtp $dPlain
 
 if ($Control) {
-    $sMtp   = Invoke-Run "stock-mtp"   "" $true
-    $sPlain = Invoke-Run "stock-plain" "" $false
+    $sMtp   = Invoke-Run "stock-mtp"   "" "" $true
+    $sPlain = Invoke-Run "stock-plain" "" "" $false
     $results += Compare-Runs "stock: draft-mtp vs plain decode" $sMtp $sPlain
 }
 
 Remove-Item Env:GGML_HIP_FA_BAND_WMMA -ErrorAction SilentlyContinue
+Remove-Item Env:GGML_HIP_FA_BAND_WMMA_SPLIT -ErrorAction SilentlyContinue
 
 if ($results -contains $false) { exit 1 }
 exit 0

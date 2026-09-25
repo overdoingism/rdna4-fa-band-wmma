@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-cuda/fattn-common.cuh b/ggml/src/ggml-cuda/fattn-common.cuh
-index 5de69c66..7d17c92f 100644
+index 5de69c66..79e4b3c8 100644
 --- a/ggml/src/ggml-cuda/fattn-common.cuh
 +++ b/ggml/src/ggml-cuda/fattn-common.cuh
-@@ -1563,6 +1563,22 @@ static __global__ void flash_attn_combine_results(
+@@ -1563,6 +1563,34 @@ static __global__ void flash_attn_combine_results(
      dst[tid] = VKQ_numerator / VKQ_denominator;
  }
  
@@ -22,30 +22,252 @@ index 5de69c66..7d17c92f 100644
 +    return ncols1;
 +}
 +
++// Blocks per output tile in the band (the interleave period P, see launch_fattn).  0 = one block per
++// CU (nsm); GGML_HIP_FA_BAND_WMMA_SPLIT overrides it for tuning.  Whatever the source, it must not
++// depend on n_q or on the KV length, or decode and verify would split differently.
++static inline int ggml_cuda_fattn_band_wmma_split() {
++    static const int split = []() {
++        const char * env = getenv("GGML_HIP_FA_BAND_WMMA_SPLIT");
++        const int v = env ? atoi(env) : 0;
++        return v > 0 ? v : 0;
++    }();
++    return split;
++}
++
  template <int DV, int ncols1, int ncols2>
  void launch_fattn(
      ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel, const int nwarps, const size_t nbytes_shared,
-@@ -1853,7 +1869,17 @@ void launch_fattn(
+@@ -1853,7 +1881,27 @@ void launch_fattn(
          blocks_num.y = 1;
          blocks_num.z = 1;
  
 -        if(use_stream_k) {
-+        // Llama-Frankenstein D: in the decode/verify band every output tile gets the same k blocks,
-+        // with k evaluated as if n_q == 1.  The kernel's stream-k range for block t*k + i is then
-+        // t*ntiles_KV + floor(i*ntiles_KV/k), i.e. the per-tile KV split depends only on k and the
-+        // KV length, never on Q->ne[1], so decode and verify combine identical partial sums.
-+        const bool band_wmma = Q->ne[1] <= 8 && amd_wmma_available(cc) && ggml_cuda_fattn_band_wmma_ncols1() != 0;
++        // Llama-Frankenstein D: in the decode/verify band the KV of every output tile is split over a
++        // fixed number P of blocks that take the nbatch_fa-row KV iterations round-robin (block i
++        // processes iterations i, i+P, i+2P, ...; launched as gridDim = (ntiles_dst, P)), like the
++        // tile kernel's parallel_blocks.  P depends only on the occupancy and the head layout, never
++        // on n_q or on the KV length, so a given KV iteration always lands in the same block at the
++        // same position of its accumulation order: a longer KV (a verify batch that crossed a
++        // 256-row padding boundary) only appends iterations that are fully masked for the earlier
++        // query rows, which are exact no-ops (P == 0, max unchanged), and the uniform fixup combines
++        // the P partials in a fixed order.  (v2 split contiguously with k = f(n_q = 1) blocks, whose
++        // split points moved with the KV length and broke greedy purity at those boundaries.)
++        const bool band_wmma = Q->ne[1] <= 8 && Q->ne[3] == 1 && amd_wmma_available(cc) && ggml_cuda_fattn_band_wmma_ncols1() != 0;
 +
 +        if (band_wmma) {
-+            const int ntiles_dst_1 = ntiles_z_gqa * K->ne[2] * Q->ne[3];
-+            const int k = std::max(1, std::min(ntiles_KV, max_blocks / ntiles_dst_1));
-+            blocks_num.x = k * ntiles_dst;
++            // P = nsm: measured on gfx1201 (64 CUs, head 256, GQA 6, 4 KV heads) the verify cost is flat
++            // for P = 48..96 at kv 20K..200K and degrades below 32 or above 128.  The occupancy-derived
++            // max_blocks / ntiles_dst of v4 gave 64 for ncols1 = 2 but only 16 for ncols1 = 4 (2x slower).
++            const int split_env = ggml_cuda_fattn_band_wmma_split();
++            const int P         = split_env > 0 ? split_env : std::max(2, nsm);
++            blocks_num.x = ntiles_dst;
++            blocks_num.y = P;
 +        } else if(use_stream_k) {
              const int nblocks_stream_k_raw = std::min(max_blocks, ntiles_KV*ntiles_dst);
              // Round down to a multiple of ntiles_dst so that each output tile gets the same number of blocks (avoids fixup).
              // Only do this if the occupancy loss from rounding is acceptable.
+@@ -1869,8 +1917,9 @@ void launch_fattn(
+             blocks_num.x = nblocks_stream_k;
+         }
+ 
+-        if (ntiles_dst % blocks_num.x != 0) { // Fixup is only needed if the SMs work on fractional tiles.
+-            dst_tmp_meta.alloc((size_t(blocks_num.x) * ncols * (2 + DV/2)));
++        const int nblocks_total = blocks_num.x * blocks_num.y; // blocks_num.y > 1 only in the band
++        if (ntiles_dst % nblocks_total != 0) { // Fixup is only needed if the SMs work on fractional tiles.
++            dst_tmp_meta.alloc((size_t(nblocks_total) * ncols * (2 + DV/2)));
+         }
+     } else {
+         // parallel_blocks must not be larger than what the tensor size allows:
+@@ -1962,9 +2011,10 @@ void launch_fattn(
+     CUDA_CHECK(cudaGetLastError());
+ 
+     if (stream_k) {
+-        if ((int)blocks_num.x % ntiles_dst == 0 && (int)blocks_num.x > ntiles_dst) {
++        const int nblocks_launched = (int)(blocks_num.x * blocks_num.y); // 2-D only in the band
++        if (nblocks_launched % ntiles_dst == 0 && nblocks_launched > ntiles_dst) {
+             // Optimized fixup: nblocks_stream_k is a multiple of ntiles_dst, launch one block per tile.
+-            const int nblocks_sk  = (int)blocks_num.x;
++            const int nblocks_sk  = nblocks_launched;
+             const int bpt         = nblocks_sk / ntiles_dst;
+ 
+             const uint3 fd0 = init_fastdiv_values(ntiles_x * ntiles_z_gqa * K->ne[2]);
+@@ -1979,7 +2029,7 @@ void launch_fattn(
+                 (float *) KQV->data, dst_tmp_meta.ptr,
+                  Q->ne[1], Q->ne[2], K->ne[2], nblocks_sk,
+                  gqa_ratio, bpt, fd0, fd1, fd2);
+-        } else if (ntiles_dst % blocks_num.x != 0) {
++        } else if (ntiles_dst % nblocks_launched != 0) {
+             // General fixup for the cases where nblocks_stream_k < ntiles_dst.
+             const int total_work = ntiles_KV * ntiles_dst;
+ 
+diff --git a/ggml/src/ggml-cuda/fattn-mma-f16.cuh b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
+index b4a65c5d..3eb66103 100644
+--- a/ggml/src/ggml-cuda/fattn-mma-f16.cuh
++++ b/ggml/src/ggml-cuda/fattn-mma-f16.cuh
+@@ -1466,7 +1466,10 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+         const int jt,
+         const int zt_gqa,
+         const int kb0_start,
+-        const int kb0_stop, const kq_derived_t derived, const fattn_kv_native_t kv_native) {
++        const int kb0_stop, const kq_derived_t derived, const fattn_kv_native_t kv_native,
++        // Llama-Frankenstein D: > 1 in the decode/verify band, where the block processes the KV
++        // iterations kb0_start, kb0_start + kb0_step, ... (< kb0_stop) and may own none of them.
++        const int kb0_step = 1) {
+ #if defined(VOLTA_MMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
+     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
+ 
+@@ -1604,10 +1607,13 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+              kv_native.K, kv_native.stride_K, 0, kv_native.type_K);
+     }
+ 
+-    // kb0_start is always < kb0_stop so the last iter can be executed unconditionally.
++    // kb0_start < kb0_stop for every stream-k block, so the last iter can be executed unconditionally.
++    // Only a band block (kb0_step > 1, round-robin KV split) can own no iteration at a short KV; it then
++    // skips the loop and writes the neutral partial (max -FLT_MAX/2, rowsum 0, VKQ 0) the fixup ignores.
++    if (kb0 < kb0_stop) {
+     if constexpr (ncols2 == 1 || use_sparse) {
+         constexpr bool oob_check = true;
+-        for (; kb0 < kb0_stop-1; ++kb0) {
++        for (; kb0 + kb0_step < kb0_stop; kb0 += kb0_step) {
+             constexpr bool last_iter = false;
+             constexpr int  k_VKQ_sup = nbatch_fa;
+             flash_attn_ext_f16_iter
+@@ -1627,7 +1633,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+              KQ_max, KQ_rowsum, jt, kb0, k_VKQ_sup, derived, kv_native);
+     } else {
+         constexpr bool oob_check = false;
+-        for (; kb0 < kb0_stop-1; ++kb0) {
++        for (; kb0 + kb0_step < kb0_stop; kb0 += kb0_step) {
+             constexpr bool last_iter = false;
+             constexpr int  k_VKQ_sup = nbatch_fa;
+             flash_attn_ext_f16_iter
+@@ -1646,6 +1652,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+              ne01, ne02, stride_K, stride_V, stride_mask, tile_Q, tile_K, tile_V, tile_mask, Q_B, VKQ_C,
+              KQ_max, KQ_rowsum, jt, kb0, k_VKQ_sup, derived, kv_native);
+     }
++    } // kb0 < kb0_stop
+ 
+     // With multi-stage loading there is no __syncthreads at the end of the iter,
+     //     there can be a race condition on shared memory access for combining/writing back results.
+@@ -1786,11 +1793,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+         if (np == 1) {
+             // No combination is needed, the meta data can be directly written from registers to VRAM.
+             if (needs_fixup && threadIdx.x < T_B_KQ::I) {
+-                float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
++                float2 * dstk_fixup_meta = dstk_fixup + (blockIdx.x*gridDim.y + blockIdx.y)*ncols;
+                 dstk_fixup_meta[jc_cwm] = KQ_cmr;
+             }
+             if (is_fixup && threadIdx.x < T_B_KQ::I) {
+-                float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x + blockIdx.x)*ncols;
++                float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x*gridDim.y + blockIdx.x*gridDim.y + blockIdx.y)*ncols;
+                 dstk_fixup_meta[jc_cwm] = KQ_cmr;
+             }
+         }
+@@ -1825,11 +1832,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+         if (np == 1) {
+             // No combination is needed, the meta data can be directly written from registers to VRAM.
+             if (needs_fixup && thread_should_write) {
+-                float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
++                float2 * dstk_fixup_meta = dstk_fixup + (blockIdx.x*gridDim.y + blockIdx.y)*ncols;
+                 dstk_fixup_meta[jc_cwm] = KQ_cmr;
+             }
+             if (is_fixup && thread_should_write) {
+-                float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x + blockIdx.x)*ncols;
++                float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x*gridDim.y + blockIdx.x*gridDim.y + blockIdx.y)*ncols;
+                 dstk_fixup_meta[jc_cwm] = KQ_cmr;
+             }
+         }
+@@ -1898,11 +1905,11 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+             // Combined KQ max + rowsum.
+             static_assert(cols_per_warp <= warp_size);
+             if (needs_fixup && (cols_per_warp == warp_size || threadIdx.x < cols_per_warp)) {
+-                float2 * dstk_fixup_meta = dstk_fixup + blockIdx.x*ncols;
++                float2 * dstk_fixup_meta = dstk_fixup + (blockIdx.x*gridDim.y + blockIdx.y)*ncols;
+                 dstk_fixup_meta[(threadIdx.y/np)*cols_per_warp + threadIdx.x] = make_float2(KQ_cmn, KQ_crs);
+             }
+             if (is_fixup && (cols_per_warp == warp_size || threadIdx.x < cols_per_warp)) {
+-                float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x + blockIdx.x)*ncols;
++                float2 * dstk_fixup_meta = dstk_fixup + (gridDim.x*gridDim.y + blockIdx.x*gridDim.y + blockIdx.y)*ncols;
+                 dstk_fixup_meta[(threadIdx.y/np)*cols_per_warp + threadIdx.x] = make_float2(KQ_cmn, KQ_crs);
+             }
+         }
+@@ -1972,9 +1979,9 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
+         __syncthreads();
+ 
+         if (np == 1 || threadIdx.y % np == 0) {
+-            // The first 2*2*gridDim.x*ncols floats in dstk_fixup are for storing max. values and row sums.
++            // The first 2*2*gridDim.x*gridDim.y*ncols floats in dstk_fixup are for storing max. values and row sums.
+             // The values after that are for the partial results of the individual blocks.
+-            float2 * dstk_fixup_data = dstk_fixup + gridDim.x*(2*ncols) + blockIdx.x*(ncols*(DV/2));
++            float2 * dstk_fixup_data = dstk_fixup + gridDim.x*gridDim.y*(2*ncols) + (blockIdx.x*gridDim.y + blockIdx.y)*(ncols*(DV/2));
+ 
+ #pragma unroll
+             for (int stride_k : {warp_size, warp_size/2, warp_size/4, warp_size/8}) {
+@@ -2159,6 +2166,62 @@ static __global__ void flash_attn_ext_f16(
+     const int iter_j     = (ne01.z    + (ncols1    - 1)) / ncols1;
+     const int iter_z_gqa = (gqa_ratio + (ncols2    - 1)) / ncols2;
+ 
++#if defined(AMD_WMMA_AVAILABLE)
++    // Llama-Frankenstein D: decode/verify band, launched as gridDim = (output tiles, P) with P > 1.
++    // Block (tile, i) takes the KV iterations i, i+P, i+2P, ... of its tile; block P-1 writes the
++    // tile-finishing partial (needs_fixup) and the others the fixup-buffer partials (is_fixup), which
++    // is exactly the layout flash_attn_stream_k_fixup_uniform combines (b = tile*P + i).
++    // Compiled only for the instances the band dispatches to (head 256, GQA folded into ncols2 = 8).
++    if constexpr (!use_sparse && DKQ == 256 && DV == 256 && ncols2 == 8) {
++        if (gridDim.y > 1) {
++            const int tile     = blockIdx.x;
++            const int sequence =  tile /(iter_j*iter_z_gqa*ne12);
++            const int z_KV     = (tile - iter_j*iter_z_gqa*ne12 * sequence)/(iter_j*iter_z_gqa);
++            const int zt_gqa   = (tile - iter_j*iter_z_gqa*ne12 * sequence - iter_j*iter_z_gqa * z_KV)/iter_j;
++            const int jt       =  tile - iter_j*iter_z_gqa*ne12 * sequence - iter_j*iter_z_gqa * z_KV - iter_j * zt_gqa;
++
++            const int zt_Q = z_KV*gqa_ratio + zt_gqa*ncols2; // Global Q head start index.
++
++            const float2 * Q_f2   = (const float2 *) (Q + nb03*sequence + nb02*zt_Q);
++            const half2  * K_h2   = (const half2  *) (K + nb13*sequence + nb12*z_KV);
++            const half   * mask_h = ncols2 == 1 && !mask ? nullptr :
++                (const half *) (mask + nb33*(sequence % ne33));
++            float2       * dstk   = ((float2 *) dst) + (sequence*ne01.z*ne02 + zt_Q) * (DV/2);
++
++            const half2 * V_h2 = V_is_K_view ? K_h2 : (const half2 *) (V + nb23*sequence + nb22*z_KV);
++            const fattn_kv_native_t kv_native = {
++                kv_native_K ? K + nb13*sequence + nb12*z_KV : nullptr,
++                kv_native_V ? V + nb23*sequence + nb22*z_KV : nullptr,
++                nb11, nb21,
++                kv_native_K, kv_native_V,
++            };
++            const float * sinks_f = sinks ? (const float *) sinks + zt_Q : nullptr;
++            const float slope = ncols2 == 1 ? get_alibi_slope(max_bias, zt_Q, n_head_log2, m0, m1) : 1.0f;
++
++            const int kb0_start = blockIdx.y;
++            const int kb0_stop  = iter_k;
++            const int kb0_step  = gridDim.y;
++
++            if (blockIdx.y == gridDim.y - 1) {
++                constexpr bool needs_fixup = true;
++                constexpr bool is_fixup    = false;
++                flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, V_is_K_view, use_sparse, needs_fixup, is_fixup>
++                    (Q_f2, K_h2, V_h2, mask_h, nullptr, sinks_f, dstk, dst_meta, scale, slope, logit_softcap,
++                     ne01, ne02, gqa_ratio, ne11, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, zt_gqa,
++                     kb0_start, kb0_stop, derived, kv_native, kb0_step);
++            } else {
++                constexpr bool needs_fixup = false;
++                constexpr bool is_fixup    = true;
++                flash_attn_ext_f16_process_tile<DKQ, DV, ncols1, ncols2, nwarps, use_logit_softcap, V_is_K_view, use_sparse, needs_fixup, is_fixup>
++                    (Q_f2, K_h2, V_h2, mask_h, nullptr, sinks_f, dstk, dst_meta, scale, slope, logit_softcap,
++                     ne01, ne02, gqa_ratio, ne11, stride_Q1, stride_Q2, stride_K, stride_V, stride_mask, jt, zt_gqa,
++                     kb0_start, kb0_stop, derived, kv_native, kb0_step);
++            }
++            return;
++        }
++    }
++#endif // defined(AMD_WMMA_AVAILABLE)
++
+     // kbc == k block continuous, current index in continuous ijk space.
+     int       kbc      = int64_t(blockIdx.x + 0)*(iter_k*iter_j*iter_z_gqa*ne12*ne03) / gridDim.x;
+     const int kbc_stop = int64_t(blockIdx.x + 1)*(iter_k*iter_j*iter_z_gqa*ne12*ne03) / gridDim.x;
 diff --git a/ggml/src/ggml-cuda/fattn.cu b/ggml/src/ggml-cuda/fattn.cu
-index 362b9165..a27e6a57 100644
+index 362b9165..124a0b55 100644
 --- a/ggml/src/ggml-cuda/fattn.cu
 +++ b/ggml/src/ggml-cuda/fattn.cu
 @@ -174,6 +174,27 @@ static bool ggml_cuda_flash_attn_ext_has_mask(const ggml_tensor * dst) {
@@ -69,7 +291,7 @@ index 362b9165..a27e6a57 100644
 +    const bool kv_ok = K->type == GGML_TYPE_Q8_0 && V->type == GGML_TYPE_Q8_0;
 +
 +    return ggml_cuda_fattn_band_wmma_ncols1() != 0 && GGML_CUDA_CC_IS_RDNA4(cc) && amd_wmma_available(cc) &&
-+        gqa_opt && Q->ne[1] <= 8 && Q->ne[0] == 256 && V->ne[0] == 256 &&
++        gqa_opt && Q->ne[1] <= 8 && Q->ne[3] == 1 && Q->ne[0] == 256 && V->ne[0] == 256 &&
 +        gqa_ratio > 4 && gqa_ratio <= 8 && logit_softcap == 0.0f && kv_ok;
 +}
 +

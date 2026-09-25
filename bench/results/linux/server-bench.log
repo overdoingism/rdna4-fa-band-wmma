@@ -1,0 +1,15 @@
+prompt tokens available: 242357
+upstream-mtp-d20000          prompt  20000 @   916.7 t/s | gen 512 @  43.63 t/s | draft 314/394 |  59.15 ms/step (198 steps)
+rb-stock-mtp-d20000          prompt  20000 @  1067.2 t/s | gen 512 @  44.12 t/s | draft 312/397 |  57.91 ms/step (200 steps)
+rb-D4-mtp-d20000             prompt  20000 @  1069.6 t/s | gen 512 @  46.40 t/s | draft 316/390 |  56.19 ms/step (196 steps)
+upstream-mtp-d60000          prompt  60000 @   809.5 t/s | gen 512 @  34.32 t/s | draft 314/394 |  75.19 ms/step (198 steps)
+rb-stock-mtp-d60000          prompt  60000 @   923.1 t/s | gen 512 @  36.14 t/s | draft 313/394 |  71.06 ms/step (199 steps)
+rb-D4-mtp-d60000             prompt  60000 @   925.3 t/s | gen 512 @  41.31 t/s | draft 313/394 |  62.16 ms/step (199 steps)
+upstream-mtp-d110000         prompt 110000 @   696.8 t/s | gen 512 @  26.96 t/s | draft 313/396 |  95.24 ms/step (199 steps)
+rb-stock-mtp-d110000         prompt 110000 @   775.6 t/s | gen 512 @  28.20 t/s | draft 308/405 |  88.82 ms/step (204 steps)
+rb-D4-mtp-d110000            prompt 110000 @   774.9 t/s | gen 512 @  36.03 t/s | draft 310/399 |  70.21 ms/step (202 steps)
+rb-D4-plain-d60000           prompt  60000 @   965.6 t/s | gen 512 @  21.73 t/s | draft 0/None |  45.93 ms/step (512 steps)
+PURITY rb-D4 d60000: PASS (identical)
+rb-stock-plain-d60000        prompt  60000 @   965.4 t/s | gen 512 @  22.78 t/s | draft 0/None |  43.81 ms/step (512 steps)
+PURITY rb-stock d60000: PASS (identical)
+EXIT 0

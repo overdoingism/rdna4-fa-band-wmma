@@ -1,0 +1,38 @@
+ggml_cuda_init: found 1 ROCm devices (Total VRAM: 32624 MiB):
+  Device 0: AMD Radeon Graphics, gfx1201 (0x1201), VMM: no, Wave Size: 32, VRAM: 32624 MiB
+ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+Testing 2 devices
+
+Backend 1/2: ROCm0
+  Device description: AMD Radeon Graphics (gfx1201)
+  Device memory: 32624 MB (31042 MB free)
+
+  FLASH_ATTN_EXT(name=fa_q8_kv20480_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],q8_0[256,20480,4,1]nb[34,1088,272,22282240],q8_0[256,20480,4,1]nb[34,1088,272,22282240],f16[20480,1,1,1]):                 6930 runs -   158.18 us/run -    43608 kB/run - [1;34m 262.91 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv20480_nb2,type=f32,ne=[256,24,2,1],op_params=[0:1031798784,3:10],sources=f32[256,2,24,1]nb[4,24576,1024,49152],q8_0[256,20480,4,1]nb[34,1088,272,22282240],q8_0[256,20480,4,1]nb[34,1088,272,22282240],f16[20480,2,1,1]):                 3840 runs -   269.53 us/run -    43696 kB/run - [1;34m 154.61 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv20480_nb3,type=f32,ne=[256,24,3,1],op_params=[0:1031798784,3:10],sources=f32[256,3,24,1]nb[4,24576,1024,73728],q8_0[256,20480,4,1]nb[34,1088,272,22282240],q8_0[256,20480,4,1]nb[34,1088,272,22282240],f16[20480,3,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+                3068 runs -   370.10 us/run -    43784 kB/run - [1;34m 112.82 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_f16_kv20480_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],f16[256,20480,4,1]nb[2,2048,512,41943040],f16[256,20480,4,1]nb[2,2048,512,41943040],f16[20480,1,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+                   6970 runs -   147.71 us/run -    82008 kB/run - [1;34m 529.48 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv51200_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],q8_0[256,51200,4,1]nb[34,1088,272,55705600],q8_0[256,51200,4,1]nb[34,1088,272,55705600],f16[51200,1,1,1]):                 2772 runs -   389.19 us/run -   108948 kB/run - [1;34m 266.97 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv51200_nb2,type=f32,ne=[256,24,2,1],op_params=[0:1031798784,3:10],sources=f32[256,2,24,1]nb[4,24576,1024,49152],q8_0[256,51200,4,1]nb[34,1088,272,55705600],q8_0[256,51200,4,1]nb[34,1088,272,55705600],f16[51200,2,1,1]):                 1540 runs -   684.79 us/run -   109096 kB/run - [1;34m 151.93 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv51200_nb3,type=f32,ne=[256,24,3,1],op_params=[0:1031798784,3:10],sources=f32[256,3,24,1]nb[4,24576,1024,73728],q8_0[256,51200,4,1]nb[34,1088,272,55705600],q8_0[256,51200,4,1]nb[34,1088,272,55705600],f16[51200,3,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+                1232 runs -   941.66 us/run -   109244 kB/run - [1;34m 110.64 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_f16_kv51200_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],f16[256,51200,4,1]nb[2,2048,512,104857600],f16[256,51200,4,1]nb[2,2048,512,104857600],f16[51200,1,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+                 2788 runs -   361.43 us/run -   204948 kB/run - [1;34m 540.79 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv102400_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],q8_0[256,102400,4,1]nb[34,1088,272,111411200],q8_0[256,102400,4,1]nb[34,1088,272,111411200],f16[102400,1,1,1]):                   1395 runs -   780.52 us/run -   217848 kB/run - [1;34m 266.18 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv102400_nb2,type=f32,ne=[256,24,2,1],op_params=[0:1031798784,3:10],sources=f32[256,2,24,1]nb[4,24576,1024,49152],q8_0[256,102400,4,1]nb[34,1088,272,111411200],q8_0[256,102400,4,1]nb[34,1088,272,111411200],f16[102400,2,1,1]):                    770 runs -  1412.01 us/run -   218096 kB/run - [1;34m 147.30 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv102400_nb3,type=f32,ne=[256,24,3,1],op_params=[0:1031798784,3:10],sources=f32[256,3,24,1]nb[4,24576,1024,73728],q8_0[256,102400,4,1]nb[34,1088,272,111411200],q8_0[256,102400,4,1]nb[34,1088,272,111411200],f16[102400,3,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+                   616 runs -  1920.79 us/run -   218344 kB/run - [1;34m 108.41 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_f16_kv102400_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],f16[256,102400,4,1]nb[2,2048,512,209715200],f16[256,102400,4,1]nb[2,2048,512,209715200],f16[102400,1,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+             1476 runs -   705.44 us/run -   409848 kB/run - [1;34m 554.07 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv204800_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],q8_0[256,204800,4,1]nb[34,1088,272,222822400],q8_0[256,204800,4,1]nb[34,1088,272,222822400],f16[204800,1,1,1]):                    624 runs -  1623.91 us/run -   435648 kB/run - [1;34m 255.84 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv204800_nb2,type=f32,ne=[256,24,2,1],op_params=[0:1031798784,3:10],sources=f32[256,2,24,1]nb[4,24576,1024,49152],q8_0[256,204800,4,1]nb[34,1088,272,222822400],q8_0[256,204800,4,1]nb[34,1088,272,222822400],f16[204800,2,1,1]):                    385 runs -  3099.31 us/run -   436096 kB/run - [1;34m 134.19 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_q8_kv204800_nb3,type=f32,ne=[256,24,3,1],op_params=[0:1031798784,3:10],sources=f32[256,3,24,1]nb[4,24576,1024,73728],q8_0[256,204800,4,1]nb[34,1088,272,222822400],q8_0[256,204800,4,1]nb[34,1088,272,222822400],f16[204800,3,1,1]): ggml_backend_cuda_graph_compute: CUDA graph warmup reset
+ggml_backend_cuda_graph_compute: CUDA graph warmup complete
+                   308 runs -  4120.77 us/run -   436544 kB/run - [1;34m 101.03 GB/s[0m
+  FLASH_ATTN_EXT(name=fa_f16_kv204800_nb1,type=f32,ne=[256,24,1,1],op_params=[0:1031798784,3:10],sources=f32[256,1,24,1]nb[4,24576,1024,24576],f16[256,204800,4,1]nb[2,2048,512,419430400],f16[256,204800,4,1]nb[2,2048,512,419430400],f16[204800,1,1,1]):               738 runs -  1397.89 us/run -   819648 kB/run - [1;34m 559.18 GB/s[0m
+  Backend ROCm0: [1;32mOK[0m
+Backend 2/2: CPU
+  Skipping
+2/2 backends passed
+[1;32mOK[0m
