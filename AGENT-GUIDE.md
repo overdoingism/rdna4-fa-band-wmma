@@ -58,11 +58,12 @@ unchanged.
 | 工具／Tool | Windows 10/11 | Linux (Ubuntu 24.04+) |
 |---|---|---|
 | GPU 驅動／driver | AMD Adrenalin（最新版） | 核心內建 amdgpu；使用者需在 `render`、`video` 群組 |
+| Shell | **PowerShell 7（`pwsh`）**：`winget install Microsoft.PowerShell`。本指南所有 Windows 指令都在 `pwsh` 裡執行，內建的 Windows PowerShell 5.1 不適用 | bash |
 | Git | `winget install Git.Git` | `sudo apt install git` |
 | CMake ≥ 3.21 | `winget install Kitware.CMake` | `sudo apt install cmake` |
-| Ninja | `winget install Ninja-build.Ninja` | `sudo apt install ninja-build`（可選） |
+| Ninja | `winget install Ninja-build.Ninja`；若裝壞，改用 https://github.com/ninja-build/ninja/releases 的 `ninja-win.zip`，解壓後放進 `PATH` | `sudo apt install ninja-build`（可選） |
 | Python 3.10+ | `winget install Python.Python.3.12` | `sudo apt install python3 python3-venv` |
-| C/C++ 函式庫 | Visual Studio 2022 Build Tools，勾選「使用 C++ 的桌面開發」（提供 Windows SDK / MSVC runtime） | `sudo apt install build-essential` |
+| C/C++ 函式庫 | **Visual Studio 2022**（17.x）Build Tools，勾選「使用 C++ 的桌面開發」（提供 Windows SDK / MSVC）。**不要只裝 VS 2026（18.x）**：它的新 STL 會讓 HIP 編譯失敗，見 §7 | `sudo apt install build-essential` |
 | ROCm SDK | **ROCm 10.0 pip 套件**（見下方，免安裝程式） | 已有 `/opt/rocm`（7.2+）就直接用；否則同樣用 pip 套件 |
 
 Windows 的 VS Build Tools 可用：
@@ -74,16 +75,23 @@ AMD 官方的 ROCm 10.0 穩定版 pip 套件，裝在獨立的 Python 虛擬環�
 AMD's official ROCm 10.0 stable wheels, installed into a separate virtual environment.
 
 ```powershell
-# Windows (PowerShell 7). Linux: use python3 and .venv/bin/ instead of Scripts\
+# Windows (pwsh). Linux: use python3 and .venv/bin/ instead of Scripts\
 py -3.12 -m venv C:\rocm-venv
-C:\rocm-venv\Scripts\python.exe -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel,device-gfx1201]"
+C:\rocm-venv\Scripts\python.exe -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel,device-gfx1201]==10.0.0"
 C:\rocm-venv\Scripts\rocm-sdk.exe init
-C:\rocm-venv\Scripts\rocm-sdk.exe test
 $ROCM = (Resolve-Path (C:\rocm-venv\Scripts\rocm-sdk.exe path --root)).Path   # absolute path
+$env:PATH = "$(C:\rocm-venv\Scripts\rocm-sdk.exe path --bin);$env:PATH"   # needed by rocm-sdk test, the build and the server
+C:\rocm-venv\Scripts\rocm-sdk.exe test
 ```
 
-- `rocm-sdk test` 必須通過。GPU 是 RX 9060 系列時，把 `device-gfx1201` 換成 `device-gfx1200`（未實測）。
-  `rocm-sdk test` must pass. Use `device-gfx1200` for the RX 9060 series (untested).
+- **版本固定為 `==10.0.0`**，這是實測過的版本。之後出新版時行為可能改變，不要自動升級。
+  Pinned to the tested `==10.0.0`; do not upgrade automatically.
+- `rocm-sdk test` 必須通過（有 skipped 無妨）。它需要 `rocm-sdk path --bin` 已在 `PATH` 裡，所以上面先設 `PATH` 再測。
+  - `PATH` 的設定**只在目前的 shell 有效**。之後每開一個新視窗（建置、執行 server）都要重設一次 `$ROCM` 和 `PATH`。
+  `rocm-sdk test` must pass (skips are fine). It needs `rocm-sdk path --bin` on `PATH`, hence the order above.
+  The `PATH` change only lasts for the current shell: set `$ROCM` and `PATH` again in every new window.
+- GPU 是 RX 9060 系列時，把 `device-gfx1201` 換成 `device-gfx1200`（未實測）。
+  Use `device-gfx1200` for the RX 9060 series (untested).
 - 參考：[TheRock RELEASES.md](https://github.com/ROCm/TheRock/blob/main/RELEASES.md)
 
 ## 3. 取得原始碼並套用 patch／Get the sources and apply the patches
@@ -125,8 +133,24 @@ git apply ../rdna4-fa-band-wmma/patches/0001-fa-band-wmma.patch
 
 ## 4. 建置／Build
 
-只需要 `llama-server`。建置 log 請直接重導到檔案（Windows 上不要用 `ForEach-Object` 逐行寫 log，會拖垮建置）。
-Only `llama-server` is needed. Redirect the build log straight to a file.
+只需要 `llama-server`。建置 log 請直接重導到檔案：
+- Windows 用 `*>`，可同時收下 stdout 與 stderr，錯誤訊息才會進檔案。
+- 不要用 `2>&1 > file`：順序錯了 stderr 會留在畫面上。
+- 不要用 `ForEach-Object` 逐行寫 log：會拖垮建置。
+
+Only `llama-server` is needed. Redirect the build log straight to a file. On Windows use `*>`, which captures stdout
+and stderr alike. Do not use `2>&1 > file` (stderr stays on the console) or a per-line `ForEach-Object` logger (it
+stalls the build).
+
+**Windows 的 RC 編譯器**：CMake 自動偵測到的 `rc.exe` 位在 Windows SDK 的長路徑下，路徑含空格和括號，會讓 CMake 的 RC 偵測步驟失敗。所以要明確傳入它的 8.3 短路徑。
+**Windows RC compiler:** CMake's auto-detected `rc.exe` sits under a Windows SDK path with spaces and parentheses,
+which breaks CMake's RC detection. Pass its 8.3 short path explicitly:
+
+```powershell
+$rcLong = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\rc.exe" | Sort-Object FullName -Descending | Select-Object -First 1).FullName
+$RC = (New-Object -ComObject Scripting.FileSystemObject).GetFile($rcLong).ShortPath -replace '\\','/'
+$RC   # must contain no spaces (e.g. C:/PROGRA~2/WI3CF2~1/10/bin/...); if it still has spaces, 8.3 names are disabled on that drive: see §7
+```
 
 ```powershell
 # Windows (in llama.cpp\, with $ROCM from step 2)
@@ -136,8 +160,8 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release `
   "-DCMAKE_HIP_COMPILER=$ROCM\lib\llvm\bin\clang.exe" `
   "-DCMAKE_PREFIX_PATH=$ROCM" "-DHIP_PATH=$ROCM" `
   -DGGML_HIP=ON -DAMDGPU_TARGETS=gfx1201 -DGGML_BACKEND_DL=ON -DGGML_CPU=ON -DGGML_NATIVE=OFF `
-  -DLLAMA_BUILD_WEBUI=OFF '-DCMAKE_C_FLAGS=-Wno-error=incompatible-pointer-types'
-cmake --build build --config Release -j 16 --target llama-server ggml-hip ggml-cpu 2>&1 > build.log
+  -DLLAMA_BUILD_WEBUI=OFF '-DCMAKE_C_FLAGS=-Wno-error=incompatible-pointer-types' "-DCMAKE_RC_COMPILER=$RC"
+cmake --build build --config Release -j 16 --target llama-server ggml-hip ggml-cpu *> build.log
 ```
 
 ```bash
@@ -149,8 +173,11 @@ cmake --build build -j"$(nproc)" --target llama-server > build.log 2>&1
 
 - 成功的判斷：`build.log` 結尾沒有 error，而且 `build/bin/` 裡有 `llama-server`。Windows 使用 `GGML_BACKEND_DL=ON`，後端是獨立 DLL，所以還要有 `ggml-hip.dll` 與 `ggml-cpu.dll`。
   Success means no error at the end of `build.log` and `llama-server` in `build/bin/`. On Windows (`GGML_BACKEND_DL=ON`) the backends are separate DLLs, so `ggml-hip.dll` and `ggml-cpu.dll` must be there too.
-- Windows 上看到「Provisioning UI assets」或 UI 下載失敗的訊息可以忽略。
-  On Windows, "Provisioning UI assets" and UI download failures can be ignored.
+- 建置途中可能出現「Provisioning UI assets」或 UI 下載失敗的訊息。
+  - 只要最後判斷成功就沒關係。
+  - 如果建置因此在連結 `llama-server` 之前就停了：先重跑一次 `cmake --build`；仍失敗就停下來回報。
+  "Provisioning UI assets" or UI download failures may show up. They are harmless if the build succeeds. If they stop
+  the build before `llama-server` is linked, re-run `cmake --build` once, and report if it still fails.
 
 ## 5. 執行／Run
 
@@ -158,13 +185,13 @@ cmake --build build -j"$(nproc)" --target llama-server > build.log 2>&1
 # Windows: the ROCm runtime DLLs must be on PATH
 $env:PATH = "$(C:\rocm-venv\Scripts\rocm-sdk.exe path --bin);$env:PATH"
 $env:GGML_HIP_FA_BAND_WMMA = "4"
-.\build\bin\llama-server.exe -m <model.gguf> -ngl 99 -c 131072 -fa on -ctk q8_0 -ctv q8_0 `
+.\build\bin\llama-server.exe -m <model.gguf> -ngl 99 -c 131072 -fa on -ctk q8_0 -ctv q8_0 --parallel 1 `
   --spec-type draft-mtp --spec-draft-n-max 2 --jinja --host 127.0.0.1 --port 8080
 ```
 
 ```bash
 # Linux
-GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 131072 -fa on -ctk q8_0 -ctv q8_0 \
+GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 131072 -fa on -ctk q8_0 -ctv q8_0 --parallel 1 \
   --spec-type draft-mtp --spec-draft-n-max 2 --jinja --host 127.0.0.1 --port 8080
 ```
 
@@ -172,7 +199,14 @@ GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 1310
   - `-ctk q8_0 -ctv q8_0`：**必要**，本 patch 只作用於 q8_0 KV。
   - `--spec-type draft-mtp`：開啟 MTP 推測解碼，本 patch 主要加速的就是它。
   - `-c`：上下文長度，依 VRAM 調整（32 GB 卡搭配 Q5_K_M 可到 262144）。
+  - `--parallel 1`：**必要**。本 patch 只在單一序列時生效：多個 slot 又沒有共用 KV 時，attention 會分成多個序列，patch 就不會啟用。
 - `-ctk/-ctv q8_0` is required; `draft-mtp` is what the patch speeds up; size `-c` to your VRAM.
+- `--parallel 1` is required: the patch only engages for a single sequence, and several slots without a unified KV
+  cache split attention into several sequences.
+- **Qwen3.8 是推理（thinking）模型。** 如果前端收到的回覆是空的，通常是 token 全被思考過程用掉了：回應內容在 `reasoning_content`，而 `max_tokens` 已經耗盡。
+  - 解法：調高 `max_tokens`，或啟動時加 `--reasoning off` 關閉思考。這個設定和本 patch 無關，依你的用途決定。
+  Qwen3.8 is a reasoning model. Empty replies usually mean the thinking consumed `max_tokens` (the text is in
+  `reasoning_content`). Raise `max_tokens` or start the server with `--reasoning off`; this is unrelated to the patch.
 - 啟動後，OpenAI 相容 API 在 `http://127.0.0.1:8080/v1`，可以接任何前端使用。
   An OpenAI-compatible API is then served at `http://127.0.0.1:8080/v1`.
 
@@ -189,7 +223,7 @@ GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 1310
      If acceptance differs a lot, compare per-step time instead: eval ms ÷ (generated tokens − accepted drafts).
 3. **可選：greedy 一致性**。這項檢查 MTP 開與關時，greedy 輸出是否逐字相同。
    Optional greedy-purity check (same greedy tokens with MTP on and off):
-   - Windows：`scripts/purity-check.ps1 -ServerExe <llama-server.exe> -Model <gguf> -PromptFile <long.txt> -Control`
+   - Windows（需 `pwsh`）：`pwsh -File scripts/purity-check.ps1 -ServerExe <llama-server.exe> -Model <gguf> -PromptFile <long.txt> -Control`
    - Linux：`scripts/bench-server.py`，需先設 `MODEL`、`UPSTREAM_SERVER`、`PATCHED_SERVER`、`CORPUS_DIR` 環境變數（見檔頭說明）
    - 兩組都應該顯示 `PASS`。Both pairs should report PASS.
 
@@ -200,10 +234,16 @@ GGML_HIP_FA_BAND_WMMA=4 ./build/bin/llama-server -m <model.gguf> -ngl 99 -c 1310
 | `git apply` 失敗 | Windows 確認 clone 時有 `core.autocrlf=false`；否則是 rdna-boosts 的 base 已變，停下回報 |
 | CMake 找不到 HIP / hipBLAS | `CMAKE_PREFIX_PATH`、`HIP_PATH` 要指向 `rocm-sdk path --root`；先跑 `rocm-sdk init` |
 | Windows 連結錯誤（找不到 `msvcrt`、`kernel32.lib`） | 安裝 VS 2022 Build Tools 的 C++ 工作負載 |
+| configure 在 RC / `CMakeRCCompiler.cmake` 出錯 | 沒傳 `CMAKE_RC_COMPILER`，或傳入的路徑含空格。若 `$RC` 仍含空格，表示該磁碟停用了 8.3 短檔名，改傳 `"-DCMAKE_RC_COMPILER=$ROCM/lib/llvm/bin/llvm-rc.exe"`（未實測） |
+| `cannot overload __host__ __device__ function 'isgreater'`（或其他 `<cmath>` 相關錯誤） | 編譯器抓到 VS 2026（18.x）的新 STL。**首選**：安裝 VS 2022 Build Tools，並在 configure 前設定 `$env:VCToolsInstallDir` 指向 VS 2022 的 `...\VC\Tools\MSVC\14.4x.xxxxx\`，然後刪掉 `build` 目錄重跑 configure。**備案**（只改虛擬環境內的檔案）：在 `$ROCM` 底下的 `__clang_hip_runtime_wrapper.h` 中，把 `#include <cmath>` 移到 `#include <__clang_cuda_math_forward_declares.h>` 之前；改之前先備份，並告知使用者 |
+| configure 或編譯找不到 HIP 裝置函式庫／`hipconfig` 路徑錯誤 | 在 configure 前補設：`$env:HIP_PLATFORM="amd"`、`$env:ROCM_PATH=$ROCM`、`$env:HIP_PATH=$ROCM`、`$env:LLVM_PATH="$ROCM\lib\llvm"`、`$env:HIP_DEVICE_LIB_PATH="$ROCM\lib\llvm\amdgcn\bitcode"`（先確認該目錄存在） |
+| `rocm-sdk test` 報 `WinError 2`（`hipconfig`） | `rocm-sdk path --bin` 沒在 `PATH` 裡，照 §2 的順序先設 `PATH` 再測 |
+| 腳本報 `#Requires -Version 7.0` | 用 `pwsh` 而不是 `powershell` 執行 |
+| 前端回覆為空 | 見 §5 的 Qwen 推理模型說明（`max_tokens` / `--reasoning off`） |
 | 啟動時找不到 `amdhip64*.dll` | 把 `rocm-sdk path --bin` 加進 `PATH` |
 | `no ROCm devices` | 更新驅動；Linux 確認使用者在 `render`、`video` 群組 |
 | 顯存不足 OOM | 降低 `-c`，或改用較小的量化 |
-| 看不出加速 | 確認：q8_0 KV、有開 MTP、上下文夠長（≥ 50K）、環境變數設在**啟動 server 的同一個 shell** |
+| 看不出加速 | 確認：q8_0 KV、有開 MTP、`--parallel 1`、上下文夠長（≥ 50K）、環境變數設在**啟動 server 的同一個 shell** |
 | 沒有 `creating MTP draft context` | 這個 GGUF 不含 MTP 層，換一個有 MTP 的版本 |
 
 ## 8. 回報／Reporting
