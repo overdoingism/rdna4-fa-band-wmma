@@ -1,5 +1,16 @@
 # rdna4-fa-band-wmma
 
+> **This repository is no longer maintained and will be deleted.**  The FA band patch was folded into
+> [llama-cpp-rdna-boosts](https://github.com/stew675/llama-cpp-rdna-boosts) (issue #45, release `v16-84e76d8a2-r4`) and has been
+> part of every release since; rdna-boosts later extended it (PRs #62 and #64).  Use rdna-boosts directly.  Our other RDNA4
+> patches that are not part of rdna-boosts are in [llama-cpp-overdoing](https://github.com/overdoingism/llama-cpp-overdoing).
+>
+> 本 repo 已停止維護，之後會刪除。FA band patch 已併入 rdna-boosts（issue #45，release `v16-84e76d8a2-r4`），之後每個版本都內含，
+> rdna-boosts 也在 PR #62、#64 進一步改良，請直接使用 rdna-boosts。我們其他不屬於 rdna-boosts 的 RDNA4 patch 已移到
+> [llama-cpp-overdoing](https://github.com/overdoingism/llama-cpp-overdoing)。
+>
+> *This notice was written by Claude (AI).*
+
 An opt-in patch for [stew675/llama-cpp-rdna-boosts](https://github.com/stew675/llama-cpp-rdna-boosts)
 that speeds up long-context **decode / MTP-verify flash attention** on RDNA4 (gfx1201) for models with
 **head size 256, GQA ratio 5–8 and a q8_0 KV cache**, e.g. Qwen3.5/3.8-27B (GQA 6). It keeps the
